@@ -49,6 +49,19 @@ the count as context.
 A run whose matrix CSV is missing is refused: that means the scan was interrupted, and a
 partial population would report every unscanned user as resolved.
 
+Only flagged users are recorded, and only for checks that flag — track-only checks keep a
+count alone, since two of them hold ninety thousand users each. A state file is a few
+hundred kilobytes.
+
+The scan itself is the thing that grows: about 700 MB per product per run, of which
+`journeys` (a debugging artifact) and every snapshot but the newest are dead weight — 42 GB
+a month for two files nobody opens. `--prune` clears them, after the state file is safely
+written and never for another product:
+
+```bash
+node src/daily.js --product=tarot --prune
+```
+
 ## Configuration
 
 `config/credentials.json` is gitignored and holds everything secret:

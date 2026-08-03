@@ -24,7 +24,7 @@
 // The second command finds the newest anomalies CSV for that product on its own, so a run
 // can be repeated and re-reported without arguments changing.
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { ALL_CHECKS } from './stages/index.js'
 
@@ -226,3 +226,38 @@ const reportPath = join(STATE_DIR, `${PRODUCT}-${today}-report.txt`)
 writeFileSync(reportPath, lines_.join('\n') + '\n')
 console.log(`\nstate : ${statePath}`)
 console.log(`report: ${reportPath}`)
+
+// Retention. A full run writes about 700 MB per product; kept daily that is 42 GB a month,
+// nearly all of it for files nobody opens twice.
+//
+//   journeys   deleted        a debugging artifact of the run that produced it
+//   snapshot   newest only    read once, by the next run's delta checks (--snapshot-in)
+//   anomalies  last N days    the per-finding detail; 95% of its rows belong to track-only
+//                             checks whose counts already live in the state file, and the
+//                             detail for anything still open can be re-read from the DB
+//   matrix     kept           a kilobyte of month-by-month counts
+//   state      kept           the diff itself, and the only record of which user a check
+//                             was holding on a given day — a few hundred kilobytes
+//   report     kept           the day's findings in the form a person reads
+//
+// Runs only after the state file is written, and only ever against this product's files.
+if (args.prune) {
+  const keepDays = Number(args.keepDays ?? args['keep-days'] ?? 7)
+  const cutoff = Date.now() - keepDays * 86400000
+  const mb = (b) => (b / 1048576).toFixed(0)
+  const mine = (suffix) => readdirSync(OUT_DIR)
+    .filter(f => f.startsWith(`${PRODUCT}-`) && f.endsWith(suffix))
+    .map(f => ({ f, path: join(OUT_DIR, f), m: statSync(join(OUT_DIR, f)).mtimeMs }))
+
+  const journeys = mine('-journeys.csv')
+  const snapshots = mine('-snapshot.csv').sort((a, b) => b.m - a.m).slice(1)
+  // Never the file this report was built from, whatever its age — re-reporting an older
+  // run must not delete the very thing it just read.
+  const anomalies = mine('-anomalies.csv')
+    .filter(x => x.m < cutoff && x.path !== anomaliesPath)
+
+  let freed = 0
+  for (const x of [...journeys, ...snapshots, ...anomalies]) { freed += statSync(x.path).size; rmSync(x.path) }
+  console.log(`pruned: ${journeys.length} journeys, ${snapshots.length} old snapshot(s), ` +
+              `${anomalies.length} anomalies older than ${keepDays}d — ${mb(freed)} MB freed`)
+}
