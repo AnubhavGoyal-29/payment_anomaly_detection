@@ -60,6 +60,10 @@ function normalizeTxn (t, plans) {
     flagReason: meta.flagReason || null,
     isPostTrialFirstRecurring: meta.isPostTrialFirstRecurring === true,
     trialSuccessAtMs: Number(meta.trialSuccessAt) || null,
+    // Written by the post-trial branch itself, so these two together say which of the two
+    // trial flows this payment settled under. countdownFlowApplied false means the trial
+    // predates the countdown flow, and the backend deliberately did not refresh credits.
+    postTrialFirstRecurringApplied: meta.postTrialFirstRecurringApplied === true,
     countdownFlowApplied: meta.countdownFlowApplied === true,
     refundedAmount: Number(meta.refundedAmount) || 0,
     isInternalUser: meta.isInternalUser === true
@@ -245,6 +249,7 @@ export function buildLedgers ({ users, slice, plans, nowMs, product = null }) {
             expireAtRaw: premium.expireAt,
             source: premium.source,
             isTrial: premium.is_trial === 1,
+            createdAtMs: ts(premium.createdAt),
             updatedAtMs: ts(premium.updatedAt)
           }
         : null,

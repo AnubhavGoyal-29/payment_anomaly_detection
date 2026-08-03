@@ -1,5 +1,15 @@
 import { days, iso, isPremiumNow } from './util.js'
-import { GHOST_SILENT_DAYS } from '../../config/products.js'
+import { GHOST_SILENT_DAYS, PREMIUM_GRANT_FLOOR } from '../../config/products.js'
+
+// The four checks below read one closed population of legacy grants (see the constant) and
+// are floored to premium rows created on or after it, so they read as tripwires rather than
+// an archive. A missing floor means no floor, never a silently empty check.
+const beforeGrantFloor = (l) => {
+  const floor = PREMIUM_GRANT_FLOOR[l.product]
+  if (!floor) return false
+  return l.premium?.createdAtMs === null || l.premium?.createdAtMs === undefined ||
+    l.premium.createdAtMs < Date.parse(floor)
+}
 
 // Stage 6 — premium_user. The central trap: expireAt means two different things. On an
 // ACTIVE row it is the end of the paid period; the moment premium expires, both the lazy
@@ -29,6 +39,7 @@ export default [
     severity: 'P1',
     title: 'EXPIRED while the expiry date is still in the future',
     fn: (l) => {
+      if (beforeGrantFloor(l)) return null
       if (l.premium?.state !== 'EXPIRED') return null
       if (l.actualExpiryMs === null || l.actualExpiryMs <= l.nowMs) return null
       return { expireAt: iso(l.actualExpiryMs), daysRemaining: days(l.actualExpiryMs - l.nowMs) }
@@ -39,6 +50,7 @@ export default [
     severity: 'P3',
     title: 'ACTIVE with a null or zero expiry date',
     fn: (l) => {
+      if (beforeGrantFloor(l)) return null
       if (l.premium?.state !== 'ACTIVE' || l.actualExpiryMs !== null) return null
       return { expireAtRaw: String(l.premium.expireAtRaw ?? '(null)') }
     }
@@ -48,6 +60,7 @@ export default [
     severity: 'P3',
     title: 'Expiry absurdly far in the future',
     fn: (l, j) => {
+      if (beforeGrantFloor(l)) return null
       if (l.actualExpiryMs === null) return null
       const ahead = days(l.actualExpiryMs - l.nowMs)
       if (ahead <= 400) return null
@@ -70,6 +83,7 @@ export default [
     // Scoped to a live window. A user who paid on a gateway outside scope, or who was
     // granted premium by a promo, would otherwise read as an anomaly forever.
     fn: (l, j) => {
+      if (beforeGrantFloor(l)) return null
       if (l.premium?.state !== 'ACTIVE') return null
       if (l.actualExpiryMs === null || l.actualExpiryMs <= l.nowMs) return null
       if (j.stepCount > 0 || j.hadTrial) return null

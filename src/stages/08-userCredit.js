@@ -151,6 +151,16 @@ export default [
       // only a defect when it destroys a window the user still holds.
       if (!isPremiumNow(l)) return null
       if (l.credit.total > 10 || l.credit.used !== 0) return null
+      // The pre-countdown trial flow, which is not this defect and not a defect at all.
+      // Trials taken on an app older than 1.3.7 hand over the plan's FULL credits up front
+      // and the first post-trial debit deliberately does not refresh them — burn all 200
+      // during the trial and the first paid cycle starts empty by design. The backend
+      // records that decision on the transaction as countdownFlowApplied, so read the flag
+      // rather than re-deriving it from version strings. Only skip when this is the user's
+      // most recent paid cycle: a later ordinary recurring debit does refresh, and an empty
+      // balance after one of those is the cap firing again.
+      const lastDelivered = j.deliveredSteps[j.deliveredSteps.length - 1]
+      if (lastDelivered?.postTrialFirstRecurringApplied && !lastDelivered.countdownFlowApplied) return null
       const cancelled = l.subs.find(s => s.state === 'CANCELLED' && s.cancellation)
       return {
         creditTotal: l.credit.total,

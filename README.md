@@ -23,6 +23,32 @@ node src/run.js --product=tarot --from=2026-05-01 --to=2026-08-04
 Four CSVs land in `output/`: `anomalies`, `journeys` (`t, p1…pn` per user), `matrix`
 (cases × months) and `snapshot`.
 
+## Running it daily
+
+```bash
+node src/run.js   --product=tarot --from=2025-01-01 --to=2026-08-05   # the scan, ~26 min
+node src/daily.js --product=tarot                                     # the report, instant
+```
+
+`daily.js` finds the newest anomalies CSV for that product, records which users each check
+is holding under `output/daily/`, and compares that against the previous day's record.
+
+**It compares user IDs, not counts, and that distinction is the whole point.** Every state
+check empties as its findings are repaired, so its number falls whether or not anything new
+broke — and a number that moved from 14 to 1 can still be hiding a new user. On a live test
+it did exactly that: S3 dropped by thirteen while gaining one, and UC9 read "+2" by count
+when three users were actually new. So the report leads with `today \ yesterday` and treats
+the count as context.
+
+| section | meaning |
+|---|---|
+| `NEW` | users a check is holding that it was not holding yesterday — the alert |
+| `RESOLVED` | users it lost; informational, and flagged loudly if a check empties outright, which is more often a broken check than a fixed population |
+| `RATES` | track-only checks as a percentage — never an alert |
+
+A run whose matrix CSV is missing is refused: that means the scan was interrupted, and a
+partial population would report every unscanned user as resolved.
+
 ## Configuration
 
 `config/credentials.json` is gitignored and holds everything secret:

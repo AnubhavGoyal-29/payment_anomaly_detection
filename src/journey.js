@@ -72,6 +72,8 @@ export function buildJourney (ledger) {
       flagged: t.flagged,
       flagReason: t.flagReason,
       isPostTrialFirstRecurring: t.isPostTrialFirstRecurring,
+      postTrialFirstRecurringApplied: t.postTrialFirstRecurringApplied,
+      countdownFlowApplied: t.countdownFlowApplied,
       trialSuccessAtMs: t.trialSuccessAtMs,
       retryCount: t.retryCount
     }
@@ -112,10 +114,24 @@ export function buildJourney (ledger) {
   // plan once among their 200-credit ones: counting all their cycles at 200 hid 400 real
   // credits each and reported them as over-consuming.
   const deliveredSteps = paidSteps.filter(s => !s.flagged)
+
+  // A trial that settled and was then revoked still handed over the credits. Its row ends
+  // up FAILED — the gateway pulls the mandate within seconds and the cancel path rewrites
+  // the state — but success_at is stamped and stays, and the grant behind it is real:
+  // premium was created and topupCredit ran before any of that happened. Every one of
+  // these carries success_at (17 of 17 across both products) and every one of those users
+  // holds credits, so reading state alone reported the whole cohort as having consumed
+  // credits nobody gave them. The rest of the journey deliberately still ignores these —
+  // they buy no cycle and move no expiry — so this stays scoped to the grant.
+  const revokedTrialGrant = ledger.plan?.isCreditPlan && !trial
+    ? ledger.txns.find(t => t.txnType === 'TRIAL_SETUP' && !COLLECTED.includes(t.state) && t.successAtMs)
+    : null
+
   const grantingSteps = trial ? [trial, ...deliveredSteps] : deliveredSteps
-  const grantingEvents = grantingSteps.length
+  const grantingEvents = grantingSteps.length + (revokedTrialGrant ? 1 : 0)
   const creditsGranted = ledger.plan?.isCreditPlan
-    ? grantingSteps.reduce((sum, s) => sum + (s.planCredits ?? ledger.planCredits ?? 0), 0)
+    ? grantingSteps.reduce((sum, s) => sum + (s.planCredits ?? ledger.planCredits ?? 0), 0) +
+      (revokedTrialGrant ? (revokedTrialGrant.planCredits ?? ledger.planCredits ?? 0) : 0)
     : null
   const creditsConsumed = ledger.creditUsage?.consumed ?? null
 

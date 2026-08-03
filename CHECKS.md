@@ -63,8 +63,8 @@ before it, leaving exactly one live subscription.
 
 | Code | Severity | What it catches |
 |---|---|---|
-| **UP1** | P0 | The repurchase left two subscriptions live, so the user can be debited twice for the same month. |
-| **UP2** | P1 | The older subscription was left in a non-terminal state — the replacement did not complete cleanly. |
+| **UP1** | P0 | Two live subscriptions were created at the same instant, so neither can see the other as newer and both will bill. Two live subscriptions on their own are fine: the debit refuses to run on any subscription that has a newer live one, so all but the newest cancel themselves when they come due. |
+| **UP2** | P1 · monitor | Counts repurchases that left an older subscription still able to bill. Not a defect: the replacement deliberately leaves paused mandates alone, a paused mandate is outside the billing cron, and it only wakes when the gateway reports the user resumed it — at which point billing is what the user asked for. Reported as a rate so a sudden rise stays visible. |
 | **UP3** | P0 | The money was collected and then refused on delivery, so the user paid for a window they never got. |
 | **UP4** | P0 | An upfront purchase succeeded but no premium was granted at all. |
 | **UP5** | MONITOR | The user bought again with plenty of their previous window left. Usually means they hit the paywall for a reason the credit balance does not explain. |

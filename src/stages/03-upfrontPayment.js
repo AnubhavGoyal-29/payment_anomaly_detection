@@ -12,16 +12,31 @@ export default [
   {
     code: 'UP1',
     severity: 'P0',
-    title: 'Repurchase left more than one subscription live',
-    // Two live mandates means the user can be debited twice for the same month.
+    title: 'Repurchase left more than one billable subscription live',
+    // Two live mandates on their own are NOT a double charge. recurringDebitInit opens by
+    // looking for a subscription created after this one that is still ACTIVE/GRACE_PERIOD;
+    // if it finds one it cancels itself and returns SUPERSEDED before any debit row is
+    // written (razorpay.js:4402, phonepe.js:2328 — both inside recurringDebitInit, ahead of
+    // the RECURRING_DEBIT transaction). So in any set of live subscriptions every one but
+    // the newest disarms itself the moment it comes due, and the newest is the one that
+    // should be billing.
+    //
+    // What the guard cannot resolve is a tie: it compares createdAt with a strict >, so two
+    // live subscriptions stamped at the same instant each see no newer sibling and both
+    // charge. That is the only shape of this that actually takes money twice, and it is
+    // what this check now looks for.
     fn: (l, j) => {
       const live = l.subs.filter(s => ['ACTIVE', 'GRACE_PERIOD'].includes(s.state))
       if (live.length < 2) return null
+      const unguarded = live.filter(s =>
+        !live.some(o => o.subscriptionId !== s.subscriptionId && (o.createdAtMs || 0) > (s.createdAtMs || 0)))
+      if (unguarded.length < 2) return null
       return {
         liveCount: live.length,
-        subscriptionIds: live.map(s => s.subscriptionId).join('|'),
-        gateways: [...new Set(live.map(s => s.gateway))].join('|'),
-        nextDueDates: live.map(s => iso(s.nextDueAtMs)).join('|'),
+        unguardedCount: unguarded.length,
+        subscriptionIds: unguarded.map(s => s.subscriptionId).join('|'),
+        gateways: [...new Set(unguarded.map(s => s.gateway))].join('|'),
+        nextDueDates: unguarded.map(s => iso(s.nextDueAtMs)).join('|'),
         purchases: j.mandateSetupCount
       }
     }
@@ -29,7 +44,16 @@ export default [
   {
     code: 'UP2',
     severity: 'P1',
-    title: 'Older subscription never cancelled after a repurchase',
+    // Track-only, because the state it describes is deliberate. The supersede selects
+    // older subscriptions in ACTIVE/INIT/GRACE_PERIOD only (razorpay.js:5234) — PAUSED is
+    // left alone on purpose, so a PAUSED leftover is not a supersede that failed to finish.
+    // Nor can it quietly bill: PAUSED is outside the cron's selection, and it only returns
+    // to ACTIVE when the gateway says the mandate was resumed, which is normally the user
+    // doing it in their UPI app. Billing a mandate the user just resumed is correct, and if
+    // a newer live subscription exists by then, recurringDebitInit's guard cancels the old
+    // one before any debit. Kept as a rate so a sudden rise in leftovers stays visible.
+    track: true,
+    title: 'Repurchase left an older subscription able to bill again',
     // Distinct from UP1: the old row may not be ACTIVE, but if it was left in a
     // non-terminal state the supersede did not complete.
     fn: (l, j) => {
@@ -43,13 +67,27 @@ export default [
       const real = l.subs.filter(s => s.state !== 'INIT')
       if (real.length < 2) return null
       const ordered = real.slice().sort((a, b) => (a.createdAtMs || 0) - (b.createdAtMs || 0))
-      const stale = ordered.slice(0, -1).filter(s => !TERMINAL.includes(s.state))
+      // A stale row left behind is untidy, not dangerous, as long as recurringDebitInit's
+      // supersede guard would disarm it: the guard cancels a subscription that has a newer
+      // ACTIVE/GRACE_PERIOD sibling, so a PAUSED leftover under a live newer mandate can
+      // never bill even if the gateway reactivates it.
+      //
+      // It only matters where the guard has nothing to find — the user's newest row is
+      // CANCELLED (they cancelled, or the supersede finished on the wrong row) and an older
+      // non-terminal mandate is the last one standing. Reactivate that and it bills someone
+      // who has no live subscription at all.
+      const hasNewerLive = s => real.some(o =>
+        (o.createdAtMs || 0) > (s.createdAtMs || 0) && ['ACTIVE', 'GRACE_PERIOD'].includes(o.state))
+      const stale = ordered.slice(0, -1)
+        .filter(s => !TERMINAL.includes(s.state))
+        .filter(s => !hasNewerLive(s))
       if (!stale.length) return null
       return {
         purchases: j.mandateSetupCount,
         staleCount: stale.length,
         staleStates: [...new Set(stale.map(s => s.state))].join('|'),
-        staleIds: stale.map(s => s.subscriptionId).join('|')
+        staleIds: stale.map(s => s.subscriptionId).join('|'),
+        newestState: ordered[ordered.length - 1].state
       }
     }
   },
@@ -57,6 +95,12 @@ export default [
     code: 'UP3',
     severity: 'P0',
     eventAtKey: 'lastAt',
+    // Track-only: this is not a discovery. The backend already stamps flagReason on the
+    // transaction at the moment it refuses delivery and emits the event to Amplitude, so
+    // the case is raised where the team already watches for it. Reporting it a second time
+    // here would double-count money that is already on someone's list. Kept so the rate
+    // stays visible in the run summary.
+    track: true,
     title: 'Upfront purchase collected but refused on delivery',
     // one_time_user_already_premium: the money was taken and the apply path deliberately
     // did nothing, so the user paid for a window they never received.

@@ -90,6 +90,23 @@ export const UC1_COHORT_FLOOR = {
 // above this is the floor working; below it means the user paid and got nothing.
 export const EXPIRY_FLOOR_DAYS = 7
 
+// The premium_user checks (PU2, PU3, PU4, PU6) all read the same closed population: rows
+// written before the payment flow was tightened, where premium was granted while every
+// transaction behind it was still PENDING. Seventeen of them survive across both products,
+// on legacy plan 1 and 5, premium rows created between June 2025 and 22 June 2026 — expiry
+// dates of 2029, 2030, 2036, two of 2070, and one literal '2050-00-00 00:00:00', which is
+// not a date at all. Nothing new has joined them.
+//
+// They are real users, several still active, so the entitlement stands as a product
+// decision rather than a defect to correct. Flooring these checks to premium rows created
+// on or after this date turns them into tripwires: zero from here, and anything above zero
+// is a new grant with no payment behind it. Floored on the premium row's own createdAt,
+// not the user's — the user may long predate the grant.
+export const PREMIUM_GRANT_FLOOR = {
+  tarot: '2026-06-23T00:00:00Z',
+  astro: '2026-06-23T00:00:00Z'
+}
+
 // A ghost is someone paying for premium and not using it: entitlement live, no message
 // sent in this many days. Reported as a rate rather than a defect — nothing is broken, it
 // is a churn signal that tends to precede a cancellation or a chargeback.
