@@ -1,0 +1,14 @@
+{
+  "name": "payment-anomaly-detection",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Read-only payment anomaly detection for tarot99 and astro99",
+  "main": "src/run.js",
+  "scripts": {
+    "scan": "node src/run.js"
+  },
+  "dependencies": {
+    "mysql2": "^3.11.0"
+  }
+}
