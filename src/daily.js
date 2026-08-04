@@ -27,6 +27,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { ALL_CHECKS } from './stages/index.js'
+import { buildReport } from './report.js'
 
 const OUT_DIR = new URL('../output/', import.meta.url).pathname
 const STATE_DIR = join(OUT_DIR, 'daily')
@@ -226,6 +227,16 @@ const reportPath = join(STATE_DIR, `${PRODUCT}-${today}-report.txt`)
 writeFileSync(reportPath, lines_.join('\n') + '\n')
 console.log(`\nstate : ${statePath}`)
 console.log(`report: ${reportPath}`)
+
+// The page a person actually reads, rebuilt on every run. It covers both products, so
+// running this for the second one completes the day; running it for the first leaves a
+// report with one product in it, which is correct rather than partial.
+try {
+  const page = buildReport({ date: today })
+  if (page) console.log(`page  : ${page.path}\n        open "${page.path}"`)
+} catch (err) {
+  console.warn(`page  : could not be built (${err.message})`)
+}
 
 // Retention. A full run writes about 700 MB per product; kept daily that is 42 GB a month,
 // nearly all of it for files nobody opens twice.
