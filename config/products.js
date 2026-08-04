@@ -52,11 +52,14 @@ export const FLAG_REASONS = [
 
 // Internal test accounts. Driven by hand through arbitrary payment states, so every
 // invariant here is meaningless for them. Most carry 111111 in the phone number; these
-// two do not, and each produced a convincing false finding before being identified —
-// a year of premium for a ₹299 monthly plan, and premium held on a payment still PENDING.
+// three do not, and each produced a convincing false finding before being identified —
+// a year of premium for a ₹299 monthly plan, premium held on a payment still PENDING, and
+// a trial written as SUCCESS rather than TRIAL_SUCCESS with premium running to 2027.
+// The last one is 1234567890: no country code, ten keys in a row. Worth checking a phone
+// looks real before believing what its payment history says.
 // Add to this list rather than filtering after the fact.
 export const TEST_PHONE_PATTERN = '111111'
-export const TEST_PHONES = ['919380419838', '918423829911']
+export const TEST_PHONES = ['919380419838', '918423829911', '1234567890']
 
 // T7's historical population is closed and fully explained, so the check is floored to
 // users created on or after these dates and reads as a tripwire rather than an archive.
@@ -106,6 +109,14 @@ export const PREMIUM_GRANT_FLOOR = {
   tarot: '2026-06-23T00:00:00Z',
   astro: '2026-06-23T00:00:00Z'
 }
+
+// How long after premium lapses a parked pool entry is still considered normal. The drain
+// runs on the user's next request or on the expiry cron, and the cron only sweeps rows
+// already lapsed for a full day — so a gap between the clock running out and the entry
+// being applied is expected, not a defect. Set well below the cron's 24 hours because
+// drains were observed landing within minutes: a user holding a pooled payment is a paying
+// user who opens the app. Anything still parked past this has missed that path.
+export const POOL_DRAIN_GRACE_MS = 2 * 60 * 60 * 1000
 
 // A ghost is someone paying for premium and not using it: entitlement live, no message
 // sent in this many days. Reported as a rate rather than a defect — nothing is broken, it

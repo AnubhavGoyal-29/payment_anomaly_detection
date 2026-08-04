@@ -1,4 +1,5 @@
 import { days, iso, isPremiumNow } from './util.js'
+import { POOL_DRAIN_GRACE_MS } from '../../config/products.js'
 
 // Stage 7 — the transaction pool. A recurring debit that succeeds while premium is still
 // live is parked rather than applied, and drained later when premium expires or credits
@@ -19,15 +20,42 @@ export default [
   {
     code: 'TP2',
     severity: 'P0',
-    title: 'Pool entry undrained while premium is expired',
+    title: 'Pool entry undrained well after premium lapsed',
     // The drain fires on premium expiry and on credit exhaustion. An entry still sitting
-    // there with premium gone means neither path ran.
+    // there long after premium ran out means neither path ran.
+    //
+    // "Long after" is the whole check. The drain is not instant: it runs on the user's next
+    // request, or on the expiry cron, which only sweeps rows already lapsed for 24 hours.
+    // Between the clock running out and either of those, a parked entry under a lapsed
+    // premium is the correct, healthy state — and asking `isPremiumNow` alone reports it as
+    // a P0. It also cannot be answered by looking at the state column: the row stays ACTIVE
+    // until the cron flips it, so a lapsed user is ACTIVE with expireAt in the past.
+    //
+    // Measured on the first day this ran: all 96 tarot findings had lapsed inside the very
+    // hour the scan was running, none earlier — so what the check was really reporting was
+    // the moment the scan happened to start, and the population turned over completely
+    // every day. The same shape gave 89 on astro.
+    //
+    // Two hours is the deliberate choice over the cron's 24. Drains were observed landing
+    // within minutes, because a user holding a pooled payment is a paying user who opens
+    // the app; anything still parked after two hours has missed that path and is worth a
+    // look even though the cron may yet catch it.
     fn: (l) => {
       if (!l.addedPool.length || isPremiumNow(l)) return null
+      // No expiry to measure from — a pool entry with no premium row behind it at all is
+      // not a fresh lapse and never resolves itself, so it is always worth reporting.
+      const lapsedMs = l.actualExpiryMs === null ? Infinity : l.nowMs - l.actualExpiryMs
+      if (lapsedMs < POOL_DRAIN_GRACE_MS) return null
       const oldest = Math.min(...l.addedPool.map(p => p.addedAtMs || l.nowMs))
       const ageDays = days(l.nowMs - oldest)
       if (ageDays < 2) return null
-      return { pooledEntries: l.addedPool.length, oldestAddedAt: iso(oldest), ageDays, premiumState: l.premium?.state ?? '(no row)' }
+      return {
+        pooledEntries: l.addedPool.length,
+        oldestAddedAt: iso(oldest),
+        ageDays,
+        lapsedHours: lapsedMs === Infinity ? null : Math.round(lapsedMs / 3600000),
+        premiumState: l.premium?.state ?? '(no row)'
+      }
     }
   },
   {
