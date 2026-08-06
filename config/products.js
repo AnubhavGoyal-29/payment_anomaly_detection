@@ -27,9 +27,17 @@ export const RETRY_LIMIT = {
   YEARLY: 16
 }
 
+// DURATION_HOURS is deliberately absent. There is no single trial length: it comes from the
+// order's own config and is ten minutes for most buckets, fifteen for 20-29
+// (CONSTANTS.TRIAL.COUNTDOWN.BUCKET_DURATIONS on the backend). The 36 hours that used to sit
+// here is only the fallback for app versions below 1.3.7, and reading it as the rule made T7
+// nearly blind — it would let a trial hold premium for a day and a half without complaint
+// when the real window had closed after ten minutes.
+//
+// Anything that needs a trial's window must read trialExpireAt from that subscription's own
+// metadata, which is what the backend wrote when it activated the trial.
 export const TRIAL = {
   MANDATE_AMOUNT: 1,
-  DURATION_HOURS: 36,
   BUCKET_MIN: 0,
   BUCKET_MAX: 94
 }

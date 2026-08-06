@@ -93,11 +93,29 @@ export default [
       if (floor && (l.userCreatedAtMs === null || l.userCreatedAtMs < Date.parse(floor))) return null
       if (!l.premium?.isTrial || j.stepCount > 0) return null
       if (l.actualExpiryMs === null || l.actualExpiryMs <= l.nowMs) return null
-      const activatedAt = l.primarySub?.trial?.activatedAtMs
-      if (!activatedAt) return null
-      const windowHours = Math.round((l.actualExpiryMs - activatedAt) / HOUR_MS)
-      if (windowHours <= TRIAL.DURATION_HOURS) return null
-      return { windowHours, maxHours: TRIAL.DURATION_HOURS, activatedAt: iso(activatedAt) }
+      // Measured against the expiry the backend itself wrote for this trial, not a
+      // constant. The window is not one number: it comes from the order's own config and
+      // is ten minutes for most buckets, fifteen for 20-29 (CONSTANTS.TRIAL.COUNTDOWN
+      // .BUCKET_DURATIONS). The 36 hours in TRIAL.DURATION_HOURS is only the fallback for
+      // app versions below 1.3.7, and using it here made the check almost blind — a trial
+      // could hold premium for a day and a half before this said anything, when the real
+      // window had closed after ten minutes.
+      const trial = l.primarySub?.trial
+      const activatedAt = trial?.activatedAtMs
+      const shouldHaveEndedAt = trial?.trialExpireAtMs
+      if (!activatedAt || !shouldHaveEndedAt) return null
+      // A minute of slack, because the row is written a moment after the window is computed.
+      if (l.actualExpiryMs <= shouldHaveEndedAt + 60000) return null
+      const heldForMinutes = Math.round((l.actualExpiryMs - activatedAt) / 60000)
+      const grantedMinutes = Math.round((shouldHaveEndedAt - activatedAt) / 60000)
+      return {
+        heldForMinutes,
+        grantedMinutes,
+        overByMinutes: heldForMinutes - grantedMinutes,
+        activatedAt: iso(activatedAt),
+        shouldHaveEndedAt: iso(shouldHaveEndedAt),
+        stillLiveUntil: iso(l.actualExpiryMs)
+      }
     }
   },
   {
