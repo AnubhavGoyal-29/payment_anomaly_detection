@@ -66,10 +66,29 @@ export default [
       const early = l.subs.filter(s =>
         isSubLive(s) && s.nextDueAtMs !== null && s.nextDueAtMs <= l.actualExpiryMs - EARLY_TOLERANCE_MS)
       if (!early.length) return null
-      const worst = early.reduce((a, b) => (a.nextDueAtMs <= b.nextDueAtMs ? a : b))
+      // An early due date on a superseded row does not become an early charge.
+      // recurringDebitInit opens by looking for a subscription created after this one that
+      // is still live; finding one, it cancels itself and returns SUPERSEDED before any
+      // debit row is written (razorpay.js:4402, phonepe.js:2328). So a leftover with a
+      // newer live sibling disarms itself on the day it comes due.
+      //
+      // All five findings on the first day this ran had exactly that shape — a user who
+      // repurchased, the new subscription live and paid to September, the old one still
+      // ACTIVE with its original due date in August. Reporting those as P0 early charges
+      // buried the case that matters: a subscription with nothing newer alive to stand it
+      // down, which really will bill inside a period the user has already paid for.
+      // isSubStateLive, not isSubLive: the guard in the backend tests the sibling's state
+      // and nothing else, so a newer subscription still stands the old one down even when
+      // its own mandate reference never persisted. Asking for a mandate here would have
+      // reported all four astro findings as unguarded when the code will in fact cancel
+      // them — matching what recurringDebitInit does is the whole point of the filter.
+      const unguarded = early.filter(s => !l.subs.some(o =>
+        o.subscriptionId !== s.subscriptionId && isSubStateLive(o) && (o.createdAtMs || 0) > (s.createdAtMs || 0)))
+      if (!unguarded.length) return null
+      const worst = unguarded.reduce((a, b) => (a.nextDueAtMs <= b.nextDueAtMs ? a : b))
       return {
         subscriptionId: worst.subscriptionId,
-        subCount: early.length,
+        subCount: unguarded.length,
         nextDueAt: iso(worst.nextDueAtMs),
         expiry: iso(l.actualExpiryMs),
         earlyByDays: days(l.actualExpiryMs - worst.nextDueAtMs),
